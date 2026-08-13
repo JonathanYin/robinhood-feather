@@ -9,7 +9,7 @@ import {
 import { Canvas, ThreeEvent, useFrame, useThree } from "@react-three/fiber";
 import { Bloom, EffectComposer, SMAA } from "@react-three/postprocessing";
 import { Leva, useControls } from "leva";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 import { SVGLoader } from "three/addons/loaders/SVGLoader.js";
 
@@ -131,6 +131,61 @@ function CameraRig({ objectSize }: { objectSize: THREE.Vector3 }) {
       far={distance + 25}
       position={[0, 0, distance]}
     />
+  );
+}
+
+function RefractableBackdrop() {
+  const viewportSize = useThree((state) => state.size);
+  const dpr = useThree((state) => state.viewport.dpr);
+  const uniforms = useMemo(
+    () => ({
+      uResolution: {
+        value: new THREE.Vector2(viewportSize.width * dpr, viewportSize.height * dpr),
+      },
+      uCenterColor: { value: new THREE.Color("#101a14") },
+      uEdgeColor: { value: new THREE.Color("#030403") },
+      uGreenGlow: { value: new THREE.Color("#123522") },
+      uVioletGlow: { value: new THREE.Color("#17122b") },
+    }),
+    [dpr, viewportSize.height, viewportSize.width],
+  );
+
+  return (
+    <mesh position={[0, 0, -6]} renderOrder={-1000} frustumCulled={false}>
+      <planeGeometry args={[60, 60]} />
+      <shaderMaterial
+        uniforms={uniforms}
+        depthWrite={false}
+        toneMapped={false}
+        vertexShader={`
+          void main() {
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `}
+        fragmentShader={`
+          uniform vec2 uResolution;
+          uniform vec3 uCenterColor;
+          uniform vec3 uEdgeColor;
+          uniform vec3 uGreenGlow;
+          uniform vec3 uVioletGlow;
+
+          void main() {
+            vec2 uv = gl_FragCoord.xy / uResolution;
+            vec2 centered = uv - 0.5;
+            centered.x *= uResolution.x / uResolution.y;
+
+            float radial = 1.0 - smoothstep(0.04, 0.78, length(centered));
+            float green = 1.0 - smoothstep(0.0, 0.52, length(centered - vec2(0.12, 0.04)));
+            float violet = 1.0 - smoothstep(0.0, 0.42, length(centered - vec2(-0.28, -0.16)));
+
+            vec3 color = mix(uEdgeColor, uCenterColor, radial);
+            color += uGreenGlow * green * 0.18;
+            color += uVioletGlow * violet * 0.1;
+            gl_FragColor = vec4(color, 1.0);
+          }
+        `}
+      />
+    </mesh>
   );
 }
 
@@ -349,6 +404,7 @@ function Scene({ glass, lightIntensity }: { glass: GlassSettings; lightIntensity
   return (
     <>
       <ReflectionEnvironment intensity={lightIntensity} />
+      <RefractableBackdrop />
       {study ? (
         <>
           <CameraRig objectSize={study.size} />
